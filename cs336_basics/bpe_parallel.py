@@ -6,7 +6,6 @@ from collections import defaultdict, Counter
 import json
 from tqdm import tqdm
 from multiprocessing import Pool, get_context
-import mmap
 import multiprocessing
 
 def init_worker(pat: str):
@@ -81,20 +80,14 @@ def process_chunk_parallel(args):
     """
     并行处理单个文本块的预分词化
     """
-    chunk_text, special_tokens, pat_str, process_id = args
+    chunk_text, special_tokens, pat_str = args
     pat = re.compile(pat_str)
     word_freqs = defaultdict(int)
     
     # 按特殊标记分割
     segments = split_on_special(chunk_text, special_tokens)
     
-    # 只为第一个进程显示进度条，避免多进程输出混乱
-    if process_id == 0:
-        segments_iter = tqdm(segments, desc=f"进程{process_id}预分词", position=0, leave=True)
-    else:
-        segments_iter = segments
-    
-    for segment in segments_iter:
+    for segment in segments:
         if segment not in special_tokens:
             # 对每个段进行预分词
             for match in re.finditer(pat, segment):
@@ -146,15 +139,20 @@ def pre_tokenize_parallel(path: str, special_tokens: List[str], num_processes: i
     with open(path, 'rb') as f:
         split_token = "<|endoftext|>".encode('utf-8') if "<|endoftext|>" in special_tokens else b"\n"
         boundaries = find_chunk_boundaries(f, num_processes, split_token)
+        
         # 准备并行处理的参数
         chunks_args = []
-        process_id = 0
+        
+        print(f"将文件分割成 {len(boundaries)-1} 个块进行并行处理...")
+        
         for start, end in zip(boundaries[:-1], boundaries[1:]):
             f.seek(start)
             chunk_bytes = f.read(end - start)
-            chunk_text = chunk_bytes.decode('utf-8', errors='ignore')
-            chunks_args.append((chunk_text, special_tokens, pat_str, process_id))
-            process_id += 1
+            try:
+                chunk_text = chunk_bytes.decode('utf-8', errors='ignore')
+                chunks_args.append((chunk_text, special_tokens, pat_str))
+            except UnicodeDecodeError:
+                continue
     
     # 并行处理
     print(f"使用 {num_processes} 个进程并行处理...")
@@ -185,139 +183,58 @@ def to_tuple_dict(word_freqs: Dict[str, int]) -> Dict[Tuple[bytes, ...], int]:
         out[word_to_bytes(w)] = f
     return out
 
-class OptimizedBPETrainer:
-    """优化的BPE训练器，使用缓存和增量更新来加速合并过程"""
-    
-    def __init__(self):
-        self.pair_counts = Counter()  # 缓存所有配对的频率
-        self.word_freqs = {}  # 当前的词频统计
-        self.pair_to_words = defaultdict(set)  # 每个配对出现在哪些词中
-        
-    def initialize_pair_counts(self, word_freqs: Dict[Tuple[bytes, ...], int]):
-        """初始化配对计数缓存"""
-        self.word_freqs = word_freqs.copy()
-        self.pair_counts.clear()
-        self.pair_to_words.clear()
-        
-        # 计算所有配对的初始频率
-        for word, freq in word_freqs.items():
-            for i in range(len(word) - 1):
-                pair = (word[i], word[i+1])
-                self.pair_counts[pair] += freq
-                self.pair_to_words[pair].add(word)
-    
-    def get_best_pair(self) -> Pair | None:
-        """获取频率最高的配对"""
-        if not self.pair_counts:
-            return None
-        # max 先比 count，再比 pair 的字典序（满足"并列时取字典序更大"）
-        return max(self.pair_counts.items(), key=lambda kv: (kv[1], kv[0]))[0]
-    
-    def merge_pair_optimized(self, pair: Pair) -> Dict[Tuple[bytes, ...], int]:
-        """优化的配对合并：只更新受影响的配对"""
-        A, B = pair
-        new_token = A + B
-        new_word_freqs = {}
-        
-        # 获取包含此配对的所有词
-        affected_words = self.pair_to_words[pair].copy()
-        
-        # 对每个受影响的词进行合并
-        for old_word in affected_words:
-            if old_word not in self.word_freqs:
-                continue
-            freq = self.word_freqs[old_word]
-            # 移除旧词的配对计数
-            self._remove_word_pairs(old_word, freq)
-            # 执行合并操作
-            new_word = self._merge_word(old_word, A, B, new_token)
-            # 添加新词
-            if new_word in new_word_freqs:
-                new_word_freqs[new_word] += freq
-            else:
-                new_word_freqs[new_word] = freq
-        
-        # 更新词频表
-        for old_word in affected_words:
-            if old_word in self.word_freqs:
-                del self.word_freqs[old_word]
-        for new_word, freq in new_word_freqs.items():
-            self.word_freqs[new_word] = self.word_freqs.get(new_word, 0) + freq
+def count_adjacent_pairs(tokenized_counts: Dict[Tuple[bytes, ...], int]) -> Counter[Pair]:
+    pair_freq = Counter()
+    for seq, f in tokenized_counts.items():
+        for i in range(len(seq) - 1):
+            pair_freq[(seq[i], seq[i+1])] += f
+    return pair_freq
 
-        # 添加新词的配对计数
-        for new_word, freq in new_word_freqs.items():
-            self._add_word_pairs(new_word, freq)
-        
-        # 移除已合并的配对
-        if pair in self.pair_counts:
-            del self.pair_counts[pair]
-        if pair in self.pair_to_words:
-            del self.pair_to_words[pair]
-        
-        return self.word_freqs.copy()
-    
-    def _remove_word_pairs(self, word: Tuple[bytes, ...], freq: int):
-        """移除一个词的所有配对计数"""
-        for i in range(len(word) - 1):
-            pair = (word[i], word[i+1])
-            self.pair_counts[pair] -= freq
-            if self.pair_counts[pair] <= 0:
-                if pair in self.pair_counts:
-                    del self.pair_counts[pair]
-            if word in self.pair_to_words[pair]:
-                self.pair_to_words[pair].remove(word)
-            if not self.pair_to_words[pair]:
-                if pair in self.pair_to_words:
-                    del self.pair_to_words[pair]
-    
-    def _add_word_pairs(self, word: Tuple[bytes, ...], freq: int):
-        """添加一个词的所有配对计数"""
-        for i in range(len(word) - 1):
-            pair = (word[i], word[i+1])
-            self.pair_counts[pair] += freq
-            self.pair_to_words[pair].add(word)
-    
-    def _merge_word(self, word: Tuple[bytes, ...], A: bytes, B: bytes, new_token: bytes) -> Tuple[bytes, ...]:
-        """在单个词中执行配对合并"""
-        result = []
+def select_best_pair(pair_freq: Counter[Pair]) -> Pair | None:
+    if not pair_freq:
+        return None
+    # max 先比 count，再比 pair 的字典序（满足“并列时取字典序更大”）
+    return max(pair_freq.items(), key=lambda kv: (kv[1], kv[0]))[0]
+
+def merge_once_on_counts(tokenized_counts: Dict[Tuple[bytes, ...], int],
+                         pair: Pair) -> Dict[Tuple[bytes, ...], int]:
+    A, B = pair
+    new_counts: Dict[Tuple[bytes, ...], int] = {}
+    for seq, f in tokenized_counts.items():
         i = 0
-        while i < len(word):
-            if i < len(word) - 1 and word[i] == A and word[i+1] == B:
-                result.append(new_token)
+        out: List[bytes] = []
+        L = len(seq)
+        while i < L:
+            if i < L - 1 and seq[i] == A and seq[i+1] == B:
+                out.append(A + B)  # 合并为一个 bytes 段，成为“完整 token”
                 i += 2
             else:
-                result.append(word[i])
+                out.append(seq[i])
                 i += 1
-        return tuple(result)
+        tup = tuple(out)
+        new_counts[tup] = new_counts.get(tup, 0) + f
+    return new_counts
 
 def save_vocab_merges(vocab: Dict[int, bytes], merges: List[Tuple[bytes, bytes]], output_path: str):
     os.makedirs(output_path, exist_ok=True)
-    merges_path = output_path + "merges.json"
-    vocab_path = output_path + "vocab_hex.json"
-
-    try:
-        # with open(merges_path, 'w') as f:
-        #     merges_data = {
-        #         "merges": [[int(b) for b in merge] for merge in merges]
-        #     }
-        #     json.dump(merges_data, f)
-        with open(output_path + "merges_str.json", 'w') as f:
-            for i, merge in enumerate(merges):
-                f.write(f"{merge[0]} {merge[1]}\n")
-    except Exception as e:
-        print(f"Error saving merges: {e}")
-    try:
-        with open(output_path + "vocab_hex.json", 'w') as f:
-            vocab_serializable = {str(k): v.hex() for k, v in vocab.items()}
-            json.dump(vocab_serializable, f)
-        with open(output_path + "vocab_str.json", 'w') as f:
-            vocab_serializable = {k: v.decode('utf-8', errors='replace') for k, v in vocab.items()}
-            json.dump(vocab_serializable, f)
-    except Exception as e:
-        print(f"Error saving vocab: {e}")
+    merges_path = output_path + "merges.txt"
+    vocab_path = output_path + "vocab.json"
+    # with open(merges_path, 'w') as f:
+    #     for i, merge in enumerate(merges):
+    #         f.write(f"{merge[0]} {merge[1]}\n")
+    with open(merges_path, 'w') as f:
+        merges_data = {
+            "merges": [[int(b) for b in merge] for merge in merges]
+        }
+        json.dump(merges_data, f)
+    with open(vocab_path, 'w') as f:
+        vocab_serializable = {str(k): v.hex() for k, v in vocab.items()}
+        json.dump(vocab_serializable, f)
+        # vocab_serializable = {str(k): v.decode('utf-8', errors='replace') for k, v in vocab.items()}
+        # json.dump(vocab_serializable, f)
 
 
-def train_bpe(input_path: str, vocab_size: int, special_tokens: List[str] = None, num_processes: int = None) -> Tuple[Dict[int, bytes], List[Tuple[bytes, bytes]]]:
+def train_bpe(input_path: str, vocab_size: int, special_tokens: List[str] = None, use_parallel: bool = True, num_processes: int = None) -> Tuple[Dict[int, bytes], List[Tuple[bytes, bytes]]]:
     merged : List[Tuple[bytes, bytes]] = []
     vocab_map : Dict[Tuple[bytes, bytes], int] = {}
     if special_tokens is None:
@@ -331,26 +248,30 @@ def train_bpe(input_path: str, vocab_size: int, special_tokens: List[str] = None
         vocab[len(vocab)] = special_token.encode('utf-8')
     
     # 3. 选择预分词化方法：并行或串行
-    word_freqs = pre_tokenize_parallel(input_path, special_tokens, num_processes)
+    if use_parallel and os.path.getsize(input_path) > 1024 * 1024:  # 如果文件大于1MB则使用并行处理
+        print("使用并行预分词化...")
+        word_freqs = pre_tokenize_parallel(input_path, special_tokens, num_processes)
+    else:
+        print("使用串行预分词化...")
+        word_freqs = defaultdict(int)
+        for token in pre_tokenize_iter(input_path, special_tokens):
+            word_freqs[word_to_bytes(token.group())] += 1
+        word_freqs = dict(word_freqs)
     
+    print(f"预分词化完成，共得到 {len(word_freqs)} 个不同的token")
     
     merge_times = vocab_size - len(vocab)
-    
-
-    # 使用优化的BPE训练器
-    trainer = OptimizedBPETrainer()
-    trainer.initialize_pair_counts(word_freqs)
-    
-    for i in tqdm(range(merge_times), desc="训练BPE (优化版)"):
-        best_pair = trainer.get_best_pair()
+    for i in tqdm(range(merge_times), desc="训练BPE"):
+        pair = count_adjacent_pairs(word_freqs)
+        best_pair = select_best_pair(pair)
         if best_pair is None:
             print("没有更多的配对可以合并")
             break
         merged.append(best_pair)
         vocab_map[best_pair[0] + best_pair[1]] = len(vocab)
         vocab[len(vocab)] = best_pair[0] + best_pair[1]
-        word_freqs = trainer.merge_pair_optimized(best_pair)
-
+        new_word_freqs = merge_once_on_counts(word_freqs, best_pair)
+        word_freqs = new_word_freqs
     
     return vocab, merged
                    
@@ -358,29 +279,26 @@ def train_bpe(input_path: str, vocab_size: int, special_tokens: List[str] = None
                         
 if __name__ == "__main__":
     import time
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--input_path", type=str, default="/data/yuer/assignment1-basics/data/TinyStoriesV2-GPT4-train.txt")
-    parser.add_argument("--output_path", type=str, default="data/TinyStories_train/")
-    parser.add_argument("--vocab_size", type=int, default=10000)
-    parser.add_argument("--special_tokens", type=str, default=["<|endoftext|>"])
-    parser.add_argument("--num_processes", type=int, default=16)
-    args = parser.parse_args()
+    
     # 测试数据文件
-    # test_file = "/data/yuer/assignment1-basics/data/tinystory_sample.txt"
-    test_file = args.input_path
-    # test_file = "/data/yuer/assignment1-basics/data/owt_train.txt"
-    # 测试优化的合并算法
-    print("测试优化的合并算法...")
+    test_file = "test_newlines.txt"
+    
+    print("="*50)
+    print("正在测试优化后的BPE训练...")
+    print("="*50)
+    
+    # 测试并行处理
     start_time = time.time()
-    vocab_optimized, merges_optimized = train_bpe(
+    vocab, merges = train_bpe(
         input_path=test_file, 
-        vocab_size=args.vocab_size, 
-        special_tokens=args.special_tokens,
-        num_processes=args.num_processes,    
+        vocab_size=1000, 
+        special_tokens=["<|endoftext|>"],
+        use_parallel=True,
+        num_processes=4
     )
-    optimized_time = time.time() - start_time
-    # save_vocab_merges(vocab_optimized, merges_optimized, "data/OWT_train/")
-    save_vocab_merges(vocab_optimized, merges_optimized, args.output_path)
+    parallel_time = time.time() - start_time
+
+    
+    # 保存结果
 
     
