@@ -103,35 +103,6 @@ def process_chunk_parallel(args):
     return dict(word_freqs)
 
 
-def pre_tokenize_iter(path: str, special_tokens: List[str]) -> Iterable[str]:
-    """
-    流式产出预分词字符串（未转 bytes），不落地存储，节省内存。
-    Also, special tokens are not yielded.
-    """
-    pat = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
-    # Contractions（英语缩略）：匹配 's, 't, 'd, 'm, 'll, 've, 're
-    # 匹配词（letter sequences），并把紧邻其左侧的单个空格并入这个 token（GPT-2 的"空格黏右侧"策略）。 " hello"
-    
-    pat = re.compile(pat)
-    
-    # 修复文件读取问题：正确处理换行符
-    with open(path, 'r', encoding='utf-8', newline='') as f:
-        # 使用 tqdm 进度条
-        file_size = os.path.getsize(path)
-        pbar = tqdm(total=file_size, unit='B', unit_scale=True, desc="预分词处理")
-        
-        for line_num, line in enumerate(f, 1):
-            # 更新进度条
-            pbar.update(len(line.encode('utf-8')))
-            
-            # 按特殊标记分割
-            segments = split_on_special(line, special_tokens)
-            for segment in segments:
-                if segment not in special_tokens:
-                    yield from re.finditer(pat, segment)
-        
-        pbar.close()
-
 
 def pre_tokenize_parallel(path: str, special_tokens: List[str], num_processes: int = None) -> Dict[Tuple[bytes, ...], int]:
     """

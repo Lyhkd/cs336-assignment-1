@@ -422,10 +422,18 @@ def test_encode_iterable_memory_usage():
         vocab_path=VOCAB_PATH,
         merges_path=MERGES_PATH,
     )
+    import tracemalloc
+    tracemalloc.start()
+    cnt = 0
     with open(FIXTURES_PATH / "tinystories_sample_5M.txt") as f:
         ids = []
         for _id in _encode_iterable(tokenizer, f):
             ids.append(_id)
+            cnt += 1
+            if cnt % 1000 == 0:
+                cur, peak = tracemalloc.get_traced_memory()
+                print("peak:", peak/1024, "KB")
+                tracemalloc.stop()
 
 
 @pytest.mark.skipif(
@@ -441,9 +449,14 @@ def test_encode_memory_usage():
         vocab_path=VOCAB_PATH,
         merges_path=MERGES_PATH,
     )
+    import tracemalloc
+    tracemalloc.start()
     with open(FIXTURES_PATH / "tinystories_sample_5M.txt") as f:
         contents = f.read()
         _ = _encode(tokenizer, contents)
+        cur, peak = tracemalloc.get_traced_memory()
+        print("peak:", peak/1024/1024, "MB")
+        tracemalloc.stop()
 
 
 @memory_limit(int(1e6))
@@ -462,3 +475,6 @@ def _encode(tokenizer, text):
     for just this function. We set the memory limit to 1MB.
     """
     return tokenizer.encode(text)
+
+if __name__ == "__main__":
+    test_encode_iterable_memory_usage()
