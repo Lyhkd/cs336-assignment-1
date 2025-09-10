@@ -1,8 +1,9 @@
 import json
 import random
 import os
-from cs336_basics.tokenizer import Tokenizer
+from cs336_basics.optimized_tokenizer import Tokenizer, UltraFastTokenizer
 import time
+
 
 def benchmark_encode(tokenizer, docs, label: str, warmup: int = 1):
     # 预热，避免首次调用带来的抖动
@@ -88,10 +89,10 @@ def main():
     print("正在加载tokenizer...")
     
     # 加载TinyStories tokenizer (10K词汇)
-    ts_tokenizer = Tokenizer.from_files(ts_vocab_path, ts_merges_path, special_tokens)
+    ts_tokenizer = UltraFastTokenizer.from_files(ts_vocab_path, ts_merges_path, special_tokens)
     
     # 加载OpenWebText tokenizer (32K词汇)
-    owt_tokenizer = Tokenizer.from_files(owt_vocab_path, owt_merges_path, special_tokens)
+    owt_tokenizer = UltraFastTokenizer.from_files(owt_vocab_path, owt_merges_path, special_tokens)
     
     print("正在采样文档...")
     

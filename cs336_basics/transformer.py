@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from cs336_basics.modules import *
+from cs336_basics.tokenizer import Tokenizer
 
 class Transformer_block(nn.Module):
     def __init__(self, d_model: int, num_heads: int, d_ff: int, device: torch.device, dtype: torch.dtype, rope: RoPE|None = None):
@@ -53,3 +54,41 @@ class Transformer_LM(nn.Module):
             x = layer(x)
         x = self.RMSnorm(x)
         return self.lm_head(x)
+
+    def decode(self, tokenizer: Tokenizer, prompt: str = "", max_new_tokens: int = 100, temperature: float = 1.0, top_p: float = 0.95) -> str:
+        # 将prompt编码为tensor
+        x = torch.tensor(tokenizer.encode(prompt), dtype=torch.long, device=self.device).unsqueeze(0)
+        
+        for _ in range(max_new_tokens):
+            # 检查是否已经生成了结束token
+            if x[0, -1].item() == tokenizer.vocab["<|endoftext|>"]:
+                break
+                
+            # 前向传播获取logits
+            logits = self.forward(x)
+            logits = logits[:, -1, :] / temperature
+            
+            # 应用top-p采样
+            probs = torch.softmax(logits, dim=-1)
+            sorted_probs, sorted_indices = torch.sort(probs, dim=-1, descending=True)
+            cumsum_probs = torch.cumsum(sorted_probs, dim=-1)
+            
+            # 创建mask：保留累积概率 <= top_p的token
+            mask = cumsum_probs <= top_p
+            # 确保至少保留一个token
+            mask[:, 0] = True
+            
+            # 将mask应用到原始概率分布
+            sorted_probs = sorted_probs * mask
+            sorted_probs = sorted_probs / sorted_probs.sum(dim=-1, keepdim=True)
+            
+            # 从排序后的概率中采样
+            next_token_idx = torch.multinomial(sorted_probs, 1)
+            # 将索引映射回原始token索引
+            next_token = sorted_indices.gather(-1, next_token_idx)
+            
+            # 将新token添加到序列中
+            x = torch.cat([x, next_token], dim=-1)
+            
+        # 将tensor转换回list并解码
+        return tokenizer.decode(x[0].tolist())

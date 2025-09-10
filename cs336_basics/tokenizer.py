@@ -17,15 +17,8 @@ class Tokenizer:
     def _id_to_vocab_bytes(self):
         return {v: k for k, v in self.vocab.items()}
     
-    # def split_on_special(self, text: str, special_tokens: List[str]) -> List[str]:
-    #     """按特殊标记切分，保证不跨特殊标记边界做 BPE 合并。"""
-    #     if not special_tokens:
-    #         return [text]
-    #     # 逐个特殊标记转义再拼接为 alternation
-    #     alt = "|".join(re.escape(tok) for tok in special_tokens)
-    #     # 保留分隔符：用捕获括号，split 后分隔符也在结果里
-    #     parts = re.split(f"({alt})", text)
-    #     return [p for p in parts if p != ""]
+    def token_to_id(self, token: str) -> int:
+        return self.vocab[token.encode("utf-8")]
     def split_on_special(self, text: str, special_tokens: List[str]) -> List[str]:
         """按特殊标记切分，保证不跨特殊标记边界做 BPE 合并。使用最长匹配优先。"""
         if not special_tokens:

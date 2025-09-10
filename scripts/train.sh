@@ -1,0 +1,1 @@
+python -m cs336_basics.train --config config/debug.json
