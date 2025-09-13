@@ -41,7 +41,7 @@ if __name__ == "__main__":
     tokenizer = AutoTokenizer.from_pretrained("gpt2")
 
     # 读取文件
-    with open("/data/yuer/assignment1-basics/data/TinyStoriesV2-GPT4-valid.txt", "r", encoding="utf-8") as f:
+    with open("/data/yuer/assignment1-basics/data/TinyStoriesV2-GPT4-train.txt", "r", encoding="utf-8") as f:
         text = f.read()
 
     # 编码为 tokens

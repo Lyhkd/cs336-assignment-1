@@ -24,6 +24,10 @@ class Transformer_block(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         h = self.attn(self.RMSnorm1(x)) + x
         h = self.ffn(self.RMSnorm2(h)) + h
+        # h = self.RMSnorm1(self.attn(x)) + x
+        # h = self.RMSnorm2(self.ffn(h)) + h
+        # h = self.attn(x) + x
+        # h = self.ffn(h) + h
         return h
 
 class Transformer_LM(nn.Module):
@@ -55,19 +59,21 @@ class Transformer_LM(nn.Module):
         x = self.RMSnorm(x)
         return self.lm_head(x)
 
+    @staticmethod
+    def from_config(config: dict):
+        device = torch.device(config["device"])
+        torch_dtype = getattr(torch, config["dtype"])
+        return Transformer_LM(config["vocab_size"], config["context_length"], config["d_model"], config["num_layers"], config["num_heads"], config["d_ff"], config["rope_theta"], device=device, dtype=torch_dtype)
+        
     def decode(self, tokenizer: Tokenizer, prompt: str = "", max_new_tokens: int = 100, temperature: float = 1.0, top_p: float = 0.95) -> str:
         # 将prompt编码为tensor
         x = torch.tensor(tokenizer.encode(prompt), dtype=torch.long, device=self.device).unsqueeze(0)
-        
+
         for _ in range(max_new_tokens):
-            # 检查是否已经生成了结束token
-            if x[0, -1].item() == tokenizer.vocab["<|endoftext|>"]:
+            if x[0, -1].item() == tokenizer.token_to_id("<|endoftext|>"):
                 break
-                
-            # 前向传播获取logits
             logits = self.forward(x)
             logits = logits[:, -1, :] / temperature
-            
             # 应用top-p采样
             probs = torch.softmax(logits, dim=-1)
             sorted_probs, sorted_indices = torch.sort(probs, dim=-1, descending=True)

@@ -1,0 +1,1 @@
+{"step":159950,"_step":159950,"eval/loss":1.3719889521598816,"train/lr":0.0001,"_timestamp":1.7576669634499211e+09,"train/step_time_s":8403.82651424408,"_runtime":8410.138304817,"train/global_norm":0.8210495986978695,"_wandb":{"runtime":8410},"train/loss":1.4735558032989502,"train/wallclock_s":8403.826580047607}

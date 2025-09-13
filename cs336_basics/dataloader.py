@@ -14,7 +14,6 @@ def data_loading(x: np.ndarray, batch_size: int, context_length: int, device: st
     m = context_length
     if n < m + 1:
         raise ValueError(f"序列过短：需要至少 m+1={m+1} 个 token，当前 n={n}")
-    # 随机数源
     rng = np.random.default_rng()
     # 起点范围：确保右移一位后的 targets 仍有 m 个元素
     # 允许的最大起点是 n - (m+1)

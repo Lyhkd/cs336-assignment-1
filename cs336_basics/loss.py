@@ -1,7 +1,7 @@
 import torch
 
 def cross_entropy(logits: torch.tensor, targets: torch.tensor) -> torch.tensor:
-    print(logits.shape, targets.shape)
+    # print(logits.shape, targets.shape)
     logits = logits.view(-1, logits.shape[-1]) # bs, vocab_size or batch_size, seq_len, vocab_size -> (B*T, vocab_size)
     targets = targets.view(-1) # shape = batch_size, seq_len or batch_size -> (B*T,)
     shift_logits = logits.sub(logits.max(dim=-1, keepdim=True)[0]) # xi 减去最大

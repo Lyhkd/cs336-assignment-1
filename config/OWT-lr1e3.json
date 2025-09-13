@@ -1,0 +1,32 @@
+{
+  "train_data_path": "data/owt_train.txt",
+  "eval_data_path": "data/owt_valid.txt",
+  
+  "vocab_size": 32000,
+  "context_length": 256,
+  "d_model": 512,
+  "num_layers": 4,
+  "num_heads": 8,
+  "d_ff": 1344,
+  "rope_theta": 10000.0,
+  
+  "batch_size": 128,
+  "max_iterations": 20000,
+  "max_learning_rate": 1e-3,
+  "min_learning_rate": 1e-4,
+  "warmup_iters": 100,
+  "cosine_annealing_iters": 12000,
+  "weight_decay": 0.01,
+  "max_grad_norm": 1.0,
+  
+  "checkpoint_dir": "./checkpoints",
+  "save_every": 1000,
+  "eval_every": 500,  
+  "log_every": 50,
+  "experiment_name": "OWT-lr1e3",
+  "dataset_name": "OWT",
+  "device": "cuda",
+  "dtype": "float32",
+  "compile_model": false,
+  "data_dtype": "uint16"
+}

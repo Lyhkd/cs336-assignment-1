@@ -152,7 +152,7 @@ class MultiheadSelfAttention(nn.Module):
             q = self.rope(q_, token_positions).reshape(bs, self.num_heads, -1, self.d_k)
             k = self.rope(k_, token_positions).reshape(bs, self.num_heads, -1, self.d_k)
             
-        causal_mask = torch.tril(torch.ones(q.shape[-2], k.shape[-2], dtype=torch.bool)) # True allow Flase forbidden
+        causal_mask = torch.tril(torch.ones(q.shape[-2], k.shape[-2], dtype=torch.bool, device=self.device)) # True allow Flase forbidden
         attn = scaled_dot_product_attention(q, k, v, causal_mask)
         attn = attn.transpose(1, 2).contiguous().view(bs, -1, self.d_model)
         out = self.w_o(attn)
